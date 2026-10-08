@@ -6,6 +6,7 @@ import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import path from "path";
 import { bundlerModuleNameResolver } from "typescript";
+import { randomBytes } from "crypto";
 
 type Thumbnail = {
   data: ArrayBuffer;
@@ -34,7 +35,9 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   const thumbBuffer = await file.arrayBuffer();
 
   const fileExtension = fileType.split("/")[1];
-  const thumbnailFilePath = path.join(cfg.assetsRoot, `${videoId}.${fileExtension}`);
+  const urlSetter = randomBytes(32).toString("base64url");
+
+  const thumbnailFilePath = path.join(cfg.assetsRoot, `${urlSetter}.${fileExtension}`);
   Bun.write(thumbnailFilePath, thumbBuffer);
 
   const video = getVideo(cfg.db, videoId);
