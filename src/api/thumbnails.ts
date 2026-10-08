@@ -38,7 +38,7 @@ export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
   const urlSetter = randomBytes(32).toString("base64url");
 
   const thumbnailFilePath = path.join(cfg.assetsRoot, `${urlSetter}.${fileExtension}`);
-  Bun.write(thumbnailFilePath, thumbBuffer);
+  await Bun.write(thumbnailFilePath, thumbBuffer);
 
   const video = getVideo(cfg.db, videoId);
   if (!video) throw new BadRequestError("Invalid video ID");
