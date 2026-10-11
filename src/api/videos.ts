@@ -41,11 +41,20 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   try {
 
   await Bun.write(tempVidFilePath, videoBuffer);
-  const s3Vid = cfg.s3Client.file(fileName);
-  await s3Vid.write(Bun.file(tempVidFilePath), {type: "video/mp4"})  
+  const fastStartVid = await processVideoForFastStart(tempVidFilePath);
+  if (!fastStartVid) throw new Error("video conversion went bad")
+  const vidAspectRatio = await getVideoAspectRatio(fastStartVid);
+  if (!vidAspectRatio) throw new Error("Couldn't return the aspect ratio")
+
+  const aspectPrefixedFileName = vidAspectRatio + "/" + fileName;
+  const s3Vid = cfg.s3Client.file(aspectPrefixedFileName);
+  await s3Vid.write(Bun.file(fastStartVid), {type: "video/mp4"})  
     
-  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${fileName}`;
+  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${aspectPrefixedFileName}`;
   await updateVideo(cfg.db, video);
+
+  const isFastVidHere = await Bun.file(fastStartVid).exists();
+  if (isFastVidHere) await Bun.file(fastStartVid).delete();
 
   } finally {
   
@@ -55,4 +64,96 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   }
 
   return respondWithJSON(200, null);
+}
+
+export async function getVideoAspectRatio(filePath: string) {
+
+  type FFprobeStream = {
+    width: number;
+    height: number;
+  }
+
+  type FFprobeOutput = {
+    programs: unknown[];
+    streams: FFprobeStream[];
+  }
+
+  try {
+  const aspectRatioProcess = Bun.spawn([
+    "ffprobe", 
+    "-v", 
+    "error", 
+    "-select_streams", 
+    "v:0", 
+    "-show_entries", 
+    "stream=width,height", 
+    "-of", 
+    "json", 
+    filePath], {
+      stderr: "pipe"
+    });
+
+    const exitCode = await aspectRatioProcess.exited;
+    if (exitCode !== 0) throw new Error("Couldn't get video aspect ratio");
+
+    const stdoutText = await new Response(aspectRatioProcess.stdout).text();
+    const aspectRatioJSON: FFprobeOutput = JSON.parse(stdoutText);
+
+    const {width, height} = aspectRatioJSON.streams[0];
+
+    let aspectRatio: string
+
+    if ((Math.floor(height) / 9) === (Math.floor(width) / 16)) {
+      aspectRatio = "landscape";
+    } else if ((Math.floor(height / 16)) === (Math.floor(width / 9))) {
+      aspectRatio = "portrait";
+    } else {
+      aspectRatio = "other"
+    }
+    
+    const stderrText = await new Response(aspectRatioProcess.stderr).text();
+
+    console.log(stderrText);
+
+    return aspectRatio;
+
+  } catch(error) {
+    if (error instanceof Error) console.log(error.message);
+    return;
+  }
+  
+}
+
+export async function processVideoForFastStart(inputFilePath: string) {
+
+  const pathArray = inputFilePath.split(".");
+  const outputFilePath = `.${pathArray[1]}.fast.mp4`;
+  const fastStartVid = Bun.spawn([
+    "ffmpeg",
+    "-i",
+    inputFilePath,
+    "-movflags",
+    "faststart",
+    "-map_metadata",
+    "0",
+    "-codec",
+    "copy",
+    "-f",
+    "mp4",
+    outputFilePath
+  ], {
+    stderr: "pipe"
+  })
+
+  const code = await fastStartVid.exited;
+  console.log(code);
+  if (code === 0) {
+    console.log(`file ready at ${outputFilePath}`);
+  } else {
+    const errorText = await new Response(fastStartVid.stderr).text();
+    console.log(errorText);
+  }
+
+  return outputFilePath;
+
 }
