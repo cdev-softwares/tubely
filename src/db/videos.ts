@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
+import { type ApiConfig, cfg } from "../config";
 import type { Database } from "bun:sqlite";
+import { generatePresignedURL } from "../api/videos";
 
 export type Video = {
   id: string;
@@ -148,3 +150,4 @@ export function deleteVideo(db: Database, id: string): void {
   `;
   db.run(sql, [id]);
 }
+

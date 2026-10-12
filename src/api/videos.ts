@@ -3,7 +3,9 @@ import { BadRequestError, UserForbiddenError, NotFoundError } from "./errors";
 import { getBearerToken, validateJWT } from "../auth";
 import { getVideo, updateVideo } from "../db/videos";
 import { type ApiConfig, cfg } from "../config";
-import type { BunRequest } from "bun";
+import { s3, type BunRequest } from "bun";
+import { setFlagsFromString } from "v8";
+import type { Video } from "../db/videos";
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const { videoId } = req.params as { videoId?: string };
@@ -50,7 +52,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   const s3Vid = cfg.s3Client.file(aspectPrefixedFileName);
   await s3Vid.write(Bun.file(fastStartVid), {type: "video/mp4"})  
     
-  video.videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${aspectPrefixedFileName}`;
+  video.videoURL = `${aspectPrefixedFileName}`;
   await updateVideo(cfg.db, video);
 
   const isFastVidHere = await Bun.file(fastStartVid).exists();
@@ -63,7 +65,7 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   
   }
 
-  return respondWithJSON(200, null);
+  return respondWithJSON(200, dbVideoToSignedVideo(cfg, video));
 }
 
 export async function getVideoAspectRatio(filePath: string) {
@@ -156,4 +158,19 @@ export async function processVideoForFastStart(inputFilePath: string) {
 
   return outputFilePath;
 
+}
+
+export function generatePresignedURL(cfg: ApiConfig, key: string, expireTime: number) {
+  const downloadLink = cfg.s3Client.presign(key, {
+    expiresIn: expireTime
+  })
+  return downloadLink;
+}
+
+export function dbVideoToSignedVideo(cfg: ApiConfig, video: Video) {
+  const videoKey = video.videoURL;
+  if (!videoKey) return video; 
+  const presignedVideoURL = generatePresignedURL(cfg, videoKey, 300);
+  video.videoURL = presignedVideoURL;
+  return video;
 }
